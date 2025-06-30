@@ -215,41 +215,62 @@ print(  ggplot(corr_long, aes(x = Sample2, y = Sample1, size = (Correlation), co
 dev.off()
 
 ## 6) post-implantation stage-specific genes ----
+## 6) post-implantation stage-specific genes ----
+Idents(pb_seurat) <- ident_by
+
 ## Find markers for post-implantation stages
-markers_post_implantation <- FindMarkers(
+markers_post_implantation_4 <- FindMarkers(
   pb_seurat, 
   slot = "data",
-  min.cells.group = 2,
-  ident.1 = c( "E5.5", "E6.5"),
-  ident.2 = c("E3.5", "In house-blastocyst", "public Blastocyst-SSII"), 
+  min.cells.group = 1,
+  ident.1 = c("E4.5"),
+  ident.2 = c("E3.5", "E5.5", "E6.5", "In house-blastocyst", "public Blastocyst-SSII"), 
   only.pos = T,
   logfc.threshold = 0.25)
+markers_post_implantation_4_ordered <- markers_post_implantation_4 %>%
+  arrange(desc(avg_log2FC)) %>%
+  mutate(group = "E4.5")
 
-markers_post_implantation <- subset(markers_post_implantation, #p_val < 0.05 & 
-                                    avg_log2FC > 0.5)
+markers_post_implantation_5 <- FindMarkers(
+  pb_seurat, 
+  slot = "data",
+  min.cells.group = 1,
+  ident.1 = c("E5.5"),
+  ident.2 = c("E3.5", "E4.5", "E6.5", "In house-blastocyst", "public Blastocyst-SSII"), 
+  only.pos = T,
+  logfc.threshold = 0.25)
+markers_post_implantation_5_ordered <- markers_post_implantation_5 %>%
+  arrange(desc(avg_log2FC)) %>%
+  mutate(group = "E5.5")
 
-exp_data <- GetAssayData(pb_seurat, assay = "RNA", slot = "data")
-exp_data <- exp_data[intersect(rownames(exp_data), rownames(markers_post_implantation)), ]
+markers_post_implantation_6 <- FindMarkers(
+  pb_seurat, 
+  slot = "data",
+  min.cells.group = 1,
+  ident.1 = c("E6.5"),
+  ident.2 = c("E3.5", "E4.5", "E5.5", "In house-blastocyst", "public Blastocyst-SSII"), 
+  only.pos = T,
+  logfc.threshold = 0.25)
+markers_post_implantation_6_ordered <- markers_post_implantation_6 %>%
+  arrange(desc(avg_log2FC)) %>%
+  mutate(group = "E6.5")
+
+# Get top 50 gene names from each
+top50_4 <- rownames(markers_post_implantation_4_ordered)[1:200]
+top50_5 <- rownames(markers_post_implantation_5_ordered)[1:200]
+top50_6 <- rownames(markers_post_implantation_6_ordered)[1:200]
+
+# Union all top genes
+top_union_genes <- union(top50_4, union(top50_5, top50_6))
+
+exp_data <- GetAssayData(pb_seurat, assay = "RNA", slot = "scale.data")
+exp_data <- exp_data[intersect(rownames(exp_data), top_union_genes), ]
 colnames(exp_data) <- colnames(pb_seurat)
 
 meta <- pb_seurat@meta.data
 exp_scale = exp_data
 
-## 7) hclust by post-implantation stage-specific genes ----
-### a. subset genes high expressed in E4.5-E6.5 while low expressed in blastocyst ----
-post_implantation_genes <- rownames(exp_scale)
-
-high_exp_post_implantation <- apply(exp_scale[intersect(rownames(exp_data), rownames(markers_post_implantation)),], 1, function(x) {
-  # Mean expression in E5.5, E6.5 should be greater than in blastocyst stages
-  high_exp_condition <- mean(x[colnames(exp_scale) %in% c("E5.5", "E6.5")]) > 
-    mean(x[grep("E3.5|blastocyst|Blastocyst",colnames(exp_scale),value = T)])
-  
-  return(high_exp_condition )
-})
-
-# Filter marker genes with higher expression in post-implantation stages and lower in blastocyst
-filtered_markers <- post_implantation_genes[high_exp_post_implantation]
-
+## 7) heatmap for post-implantation stage-specific genes ----
 ### b. plot heatmap ---- 
 if (ident_by == "cell_info") {
   pdf(paste0(file_names_prefix, "filtered_post-implantation stage-specific genes_heatmap.pdf"), width=8, height=10, onefile = F)
@@ -257,7 +278,7 @@ if (ident_by == "cell_info") {
   pdf(paste0(file_names_prefix, "filtered_post-implantation stage-specific genes_heatmap.pdf"), width=10, height=15, onefile = F)
 }
 print(
-  Heatmap(as.matrix(exp_scale[filtered_markers,]),
+  Heatmap(as.matrix(exp_scale[intersect(rownames(exp_scale), top_union_genes),]),
           column_split = meta[ident_by],
           show_row_names = F,
           show_column_names = T,  # Show column names
@@ -268,7 +289,13 @@ print(
           heatmap_legend_param = list(title='')))
 dev.off()
 
-## 8) Similarity ----
+## 8) save data ----
+saveRDS(pb_seurat, paste0(file_names_prefix, "data.rds"))
+write.csv(markers_post_implantation_4_ordered, paste0(file_names_prefix, "_E4.5_DEG.csv"), quote = F, row.names = T)
+write.csv(markers_post_implantation_5_ordered, paste0(file_names_prefix, "_E5.5_DEG.csv"), quote = F, row.names = T)
+write.csv(markers_post_implantation_6_ordered, paste0(file_names_prefix, "_E6.5_DEG.csv"), quote = F, row.names = T)
+
+## 9) Similarity ----
 ### a. train data (blastocyst) ----
 train <- subset(dataset, sample_info %in% as.character(
   grep("E3.5|E4.5|E5.5|E6.5|blastocyst",dataset$sample_info, value = T)))
@@ -303,7 +330,6 @@ heatmap_mat = Test_similarity$heatmap@matrix[,c(
   "TBLC-blastoid", "TPSC-blastoid", "In house-blastoid"
 )]
 
-
 if (ident_by == "cell_info") {
   pdf(paste0(file_names_prefix, "similarity.pdf"), width=7, height=3.5, onefile = F)
 } else {
@@ -314,7 +340,7 @@ print(  pheatmap::pheatmap(heatmap_mat, cluster_cols = F,
                            cluster_rows = F))
 dev.off()
 
-## 9) Marker genes expr heatmap ----
+## 10) Marker genes expr heatmap ----
 ### a. load marker list ----
 marker <- openxlsx::read.xlsx('/home/fengyan02/Project/YYYProject202306/BasicAnalysis/20240221/data/SSII-seq sample 信息及各个lineage marker.xlsx',
                               sheet = 2, colNames = F)
@@ -391,7 +417,7 @@ if (nrow(as.matrix(exp_scale) %>% t) > 1){
 }
 dev.off()
 
-## 10) save data ----
+## 11) save data ----
 saveRDS(pb_seurat, paste0(file_names_prefix, "data.rds"))
 write.csv(markers_post_implantation, paste0(file_names_prefix, "DEG.csv"), quote = F, row.names = T)
 
@@ -403,7 +429,7 @@ use_all_genes <- TRUE
 Idents(dataset) <- ident_by
 
 on.exit({
-  while(dev.cur() > 1) dev.off()  # 确保所有图形设备关闭
+  while(dev.cur() > 1) dev.off()
 })
 
 file_names_prefix <- paste0(output_folder, "/", ident_by, "-", ifelse(use_all_genes, "All_genes", "Hvg"), "-")
@@ -526,40 +552,62 @@ print(  ggplot(corr_long, aes(x = Sample2, y = Sample1, size = (Correlation), co
 dev.off()
 
 ## 6) post-implantation stage-specific genes ----
+Idents(pb_seurat) <- ident_by
+
 ## Find markers for post-implantation stages
-markers_post_implantation <- FindMarkers(
+markers_post_implantation_8 <- FindMarkers(
   pb_seurat, 
   slot = "data",
-  min.cells.group = 2,
-  ident.1 = c( "E5.5", "E6.5"),
-  ident.2 = c("E3.5", "In house-blastocyst", "public Blastocyst-SSII"), 
+  min.cells.group = 1,
+  ident.1 = c("E8.5"),
+  ident.2 = c("E7.5", "E6.5", "TBLC-blastoid", "ET-blastoid", "EPT-blastoid", "EPS-blastoid", 
+              "Public-blastocyst", "TPSC-blastoid", "g2MYCP-Blastoid", "In-house Blastoid"), 
   only.pos = T,
   logfc.threshold = 0.25)
+markers_post_implantation_8_ordered <- markers_post_implantation_8 %>%
+  arrange(desc(avg_log2FC)) %>%
+  mutate(group = "E8.5")
 
-markers_post_implantation <- subset(markers_post_implantation, #p_val < 0.05 & 
-                                    avg_log2FC > 0.5)
+markers_post_implantation_7 <- FindMarkers(
+  pb_seurat, 
+  slot = "data",
+  min.cells.group = 1,
+  ident.1 = c("E7.5"),
+  ident.2 = c("E8.5", "E6.5", "TBLC-blastoid", "ET-blastoid", "EPT-blastoid", "EPS-blastoid", 
+              "Public-blastocyst", "TPSC-blastoid", "g2MYCP-Blastoid", "In-house Blastoid"), 
+  only.pos = T,
+  logfc.threshold = 0.25)
+markers_post_implantation_7_ordered <- markers_post_implantation_7 %>%
+  arrange(desc(avg_log2FC)) %>%
+  mutate(group = "E7.5")
 
-exp_data <- GetAssayData(pb_seurat, assay = "RNA", slot = "data")
-exp_data <- exp_data[intersect(rownames(exp_data), rownames(markers_post_implantation)), ]
+markers_post_implantation_6 <- FindMarkers(
+  pb_seurat, 
+  slot = "data",
+  min.cells.group = 1,
+  ident.1 = c("E6.5"),
+  ident.2 = c("E7.5", "E8.5", "TBLC-blastoid", "ET-blastoid", "EPT-blastoid", "EPS-blastoid", 
+              "Public-blastocyst", "TPSC-blastoid", "g2MYCP-Blastoid", "In-house Blastoid"), 
+  only.pos = T,
+  logfc.threshold = 0.25)
+markers_post_implantation_6_ordered <- markers_post_implantation_6 %>%
+  arrange(desc(avg_log2FC)) %>%
+  mutate(group = "E6.5")
+
+# Get top 50 gene names from each
+top50_8 <- rownames(markers_post_implantation_8_ordered)[1:500]
+top50_7 <- rownames(markers_post_implantation_7_ordered)[1:500]
+top50_6 <- rownames(markers_post_implantation_6_ordered)[1:500]
+
+# Union all top genes
+top_union_genes <- union(top50_8, union(top50_7, top50_6))
+
+exp_data <- GetAssayData(pb_seurat, assay = "RNA", slot = "scale.data")
+exp_data <- exp_data[intersect(rownames(exp_data), top_union_genes), ]
 colnames(exp_data) <- colnames(pb_seurat)
 
 meta <- pb_seurat@meta.data
 exp_scale = exp_data
-
-## 7) hclust by post-implantation stage-specific genes ----
-### a. subset genes high expressed in E4.5-E6.5 while low expressed in blastocyst ----
-post_implantation_genes <- rownames(exp_scale)
-
-high_exp_post_implantation <- apply(exp_scale[intersect(rownames(exp_data), rownames(markers_post_implantation)),], 1, function(x) {
-  # Mean expression in E5.5, E6.5 should be greater than in blastocyst stages
-  high_exp_condition <- mean(x[colnames(exp_scale) %in% c("E5.5", "E6.5")]) > 
-    mean(x[grep("E3.5|blastocyst|Blastocyst",colnames(exp_scale),value = T)])
-  
-  return(high_exp_condition )
-})
-
-# Filter marker genes with higher expression in post-implantation stages and lower in blastocyst
-filtered_markers <- post_implantation_genes[high_exp_post_implantation]
 
 ### b. plot heatmap ---- 
 if (ident_by == "cell_info") {
@@ -568,7 +616,7 @@ if (ident_by == "cell_info") {
   pdf(paste0(file_names_prefix, "filtered_post-implantation stage-specific genes_heatmap.pdf"), width=10, height=15, onefile = F)
 }
 print(
-  Heatmap(as.matrix(exp_scale[filtered_markers,]),
+  Heatmap(as.matrix(exp_scale[intersect(rownames(exp_scale), top_union_genes),]),
           column_split = meta[ident_by],
           show_row_names = F,
           show_column_names = T,  # Show column names
@@ -579,7 +627,13 @@ print(
           heatmap_legend_param = list(title='')))
 dev.off()
 
-## 8) Similarity ----
+## 8) save data ----
+saveRDS(pb_seurat, paste0(file_names_prefix, "data.rds"))
+write.csv(markers_post_implantation_8_ordered, paste0(file_names_prefix, "_E8.5_DEG.csv"), quote = F, row.names = T)
+write.csv(markers_post_implantation_7_ordered, paste0(file_names_prefix, "_E7.5_DEG.csv"), quote = F, row.names = T)
+write.csv(markers_post_implantation_6_ordered, paste0(file_names_prefix, "_E6.5_DEG.csv"), quote = F, row.names = T)
+
+## 9) Similarity ----
 ### a. train data (blastocyst) ----
 train <- subset(dataset, sample_info %in% as.character(
   grep("E3.5|E4.5|E5.5|E6.5|blastocyst",dataset$sample_info, value = T)))
@@ -614,7 +668,6 @@ heatmap_mat = Test_similarity$heatmap@matrix[,c(
   "TBLC-blastoid", "TPSC-blastoid", "In house-blastoid"
 )]
 
-
 if (ident_by == "cell_info") {
   pdf(paste0(file_names_prefix, "similarity.pdf"), width=7, height=3.5, onefile = F)
 } else {
@@ -625,7 +678,7 @@ print(  pheatmap::pheatmap(heatmap_mat, cluster_cols = F,
                            cluster_rows = F))
 dev.off()
 
-## 9) Marker genes expr heatmap ----
+## 10) Marker genes expr heatmap ----
 ### a. load marker list ----
 marker <- openxlsx::read.xlsx('/home/fengyan02/Project/YYYProject202306/BasicAnalysis/20240221/data/SSII-seq sample 信息及各个lineage marker.xlsx',
                               sheet = 2, colNames = F)
@@ -702,7 +755,7 @@ if (nrow(as.matrix(exp_scale) %>% t) > 1){
 }
 dev.off()
 
-## 10) save data ----
+## 11) save data ----
 saveRDS(pb_seurat, paste0(file_names_prefix, "data.rds"))
 write.csv(markers_post_implantation, paste0(file_names_prefix, "DEG.csv"), quote = F, row.names = T)
 
@@ -714,7 +767,7 @@ use_all_genes <- FALSE
 Idents(dataset) <- ident_by
 
 on.exit({
-  while(dev.cur() > 1) dev.off()  # 确保所有图形设备关闭
+  while(dev.cur() > 1) dev.off()
 })
 
 file_names_prefix <- paste0(output_folder, "/", ident_by, "-", ifelse(use_all_genes, "All_genes", "Hvg"), "-")
@@ -852,40 +905,59 @@ print(  ggplot(corr_long, aes(x = Sample2, y = Sample1, size = (Correlation), co
 dev.off()
 
 ## 6) post-implantation stage-specific genes ----
+Idents(pb_seurat) <- ident_by
+
 ## Find markers for post-implantation stages
-markers_post_implantation <- FindMarkers(
+markers_post_implantation_4 <- FindMarkers(
   pb_seurat, 
   slot = "data",
-  min.cells.group = 2,
-  ident.1 = grep("E5.5|E6.5", colnames(pb_seurat), value = T),
-  ident.2 = grep("E3.5|In house-blastocyst|public Blastocyst-SSII", colnames(pb_seurat), value = T), 
+  min.cells.group = 1,
+  ident.1 = grep("E4.5", colnames(pb_seurat), value = T),
+  ident.2 = grep("E3.5|E6.5|E5.5|In house-blastocyst|public Blastocyst-SSII", colnames(pb_seurat), value = T), 
   only.pos = T,
   logfc.threshold = 0.25)
+markers_post_implantation_4_ordered <- markers_post_implantation_4 %>%
+  arrange(desc(avg_log2FC)) %>%
+  mutate(group = "E4.5")
 
-markers_post_implantation <- subset(markers_post_implantation, #p_val < 0.05 & 
-                                    avg_log2FC > 0.5)
+markers_post_implantation_5 <- FindMarkers(
+  pb_seurat, 
+  slot = "data",
+  min.cells.group = 1,
+  ident.1 = grep("E5.5", colnames(pb_seurat), value = T),
+  ident.2 = grep("E3.5|E4.5|E6.5|In house-blastocyst|public Blastocyst-SSII", colnames(pb_seurat), value = T), 
+  only.pos = T,
+  logfc.threshold = 0.25)
+markers_post_implantation_5_ordered <- markers_post_implantation_5 %>%
+  arrange(desc(avg_log2FC)) %>%
+  mutate(group = "E5.5")
 
-exp_data <- GetAssayData(pb_seurat, assay = "RNA", slot = "data")
-exp_data <- exp_data[intersect(rownames(exp_data), rownames(markers_post_implantation)), ]
+markers_post_implantation_6 <- FindMarkers(
+  pb_seurat, 
+  slot = "data",
+  min.cells.group = 1,
+  ident.1 = grep("E6.5", colnames(pb_seurat), value = T),
+  ident.2 = grep("E3.5|E4.5|E5.5|In house-blastocyst|public Blastocyst-SSII", colnames(pb_seurat), value = T), 
+  only.pos = T,
+  logfc.threshold = 0.25)
+markers_post_implantation_6_ordered <- markers_post_implantation_6 %>%
+  arrange(desc(avg_log2FC)) %>%
+  mutate(group = "E6.5")
+
+# Get top 50 gene names from each
+top50_4 <- rownames(markers_post_implantation_4_ordered)[1:200]
+top50_5 <- rownames(markers_post_implantation_5_ordered)[1:200]
+top50_6 <- rownames(markers_post_implantation_6_ordered)[1:200]
+
+# Union all top genes
+top_union_genes <- union(top50_4, union(top50_5, top50_6))
+
+exp_data <- GetAssayData(pb_seurat, assay = "RNA", slot = "scale.data")
+exp_data <- exp_data[intersect(rownames(exp_data), top_union_genes), ]
 colnames(exp_data) <- colnames(pb_seurat)
 
 meta <- pb_seurat@meta.data
 exp_scale = exp_data
-
-## 7) hclust by post-implantation stage-specific genes ----
-### a. subset genes high expressed in E4.5-E6.5 while low expressed in blastocyst ----
-post_implantation_genes <- rownames(exp_scale)
-
-high_exp_post_implantation <- apply(exp_scale[intersect(rownames(exp_data), rownames(markers_post_implantation)),], 1, function(x) {
-  # Mean expression in E5.5, E6.5 should be greater than in blastocyst stages
-  high_exp_condition <- mean(x[colnames(exp_scale) %in% c("E5.5", "E6.5")]) > 
-    mean(x[grep("E3.5|blastocyst|Blastocyst",colnames(exp_scale),value = T)])
-  
-  return(high_exp_condition )
-})
-
-# Filter marker genes with higher expression in post-implantation stages and lower in blastocyst
-filtered_markers <- post_implantation_genes[high_exp_post_implantation]
 
 ### b. plot heatmap ---- 
 if (ident_by == "cell_info") {
@@ -894,7 +966,7 @@ if (ident_by == "cell_info") {
   pdf(paste0(file_names_prefix, "filtered_post-implantation stage-specific genes_heatmap.pdf"), width=10, height=15, onefile = F)
 }
 print(
-  Heatmap(as.matrix(exp_scale[filtered_markers,]),
+  Heatmap(as.matrix(exp_scale[intersect(rownames(exp_scale), top_union_genes),]),
           column_split = meta[ident_by],
           show_row_names = F,
           show_column_names = T,  # Show column names
@@ -905,7 +977,13 @@ print(
           heatmap_legend_param = list(title='')))
 dev.off()
 
-## 8) Similarity ----
+## 8) save data ----
+saveRDS(pb_seurat, paste0(file_names_prefix, "data.rds"))
+write.csv(markers_post_implantation_4_ordered, paste0(file_names_prefix, "_E4.5_DEG.csv"), quote = F, row.names = T)
+write.csv(markers_post_implantation_5_ordered, paste0(file_names_prefix, "_E5.5_DEG.csv"), quote = F, row.names = T)
+write.csv(markers_post_implantation_6_ordered, paste0(file_names_prefix, "_E6.5_DEG.csv"), quote = F, row.names = T)
+
+## 9) Similarity ----
 ### a. train data (blastocyst) ----
 train <- subset(dataset, sample_info %in% as.character(
   grep("E3.5|E4.5|E5.5|E6.5|blastocyst",dataset$sample_info, value = T)))
@@ -967,7 +1045,7 @@ print(  pheatmap::pheatmap(heatmap_mat, cluster_cols = F,
                            cluster_rows = F))
 dev.off()
 
-## 9) Marker genes expr heatmap ----
+## 10) Marker genes expr heatmap ----
 ### a. load marker list ----
 marker <- openxlsx::read.xlsx('/home/fengyan02/Project/YYYProject202306/BasicAnalysis/20240221/data/SSII-seq sample 信息及各个lineage marker.xlsx',
                               sheet = 2, colNames = F)
@@ -1044,7 +1122,7 @@ if (nrow(as.matrix(exp_scale) %>% t) > 1){
 }
 dev.off()
 
-## 10) save data ----
+## 11) save data ----
 saveRDS(pb_seurat, paste0(file_names_prefix, "data.rds"))
 write.csv(markers_post_implantation, paste0(file_names_prefix, "DEG.csv"), quote = F, row.names = T)
 
@@ -1056,7 +1134,7 @@ use_all_genes <- TRUE
 Idents(dataset) <- ident_by
 
 on.exit({
-  while(dev.cur() > 1) dev.off()  # 确保所有图形设备关闭
+  while(dev.cur() > 1) dev.off()
 })
 
 file_names_prefix <- paste0(output_folder, "/", ident_by, "-", ifelse(use_all_genes, "All_genes", "Hvg"), "-")
@@ -1194,40 +1272,59 @@ print(  ggplot(corr_long, aes(x = Sample2, y = Sample1, size = (Correlation), co
 dev.off()
 
 ## 6) post-implantation stage-specific genes ----
+Idents(pb_seurat) <- ident_by
+
 ## Find markers for post-implantation stages
-markers_post_implantation <- FindMarkers(
+markers_post_implantation_4 <- FindMarkers(
   pb_seurat, 
   slot = "data",
-  min.cells.group = 2,
-  ident.1 = grep("E5.5|E6.5", colnames(pb_seurat), value = T),
-  ident.2 = grep("E3.5|In house-blastocyst|public Blastocyst-SSII", colnames(pb_seurat), value = T), 
+  min.cells.group = 1,
+  ident.1 = grep("E4.5", colnames(pb_seurat), value = T),
+  ident.2 = grep("E3.5|E6.5|E5.5|In house-blastocyst|public Blastocyst-SSII", colnames(pb_seurat), value = T), 
   only.pos = T,
   logfc.threshold = 0.25)
+markers_post_implantation_4_ordered <- markers_post_implantation_4 %>%
+  arrange(desc(avg_log2FC)) %>%
+  mutate(group = "E4.5")
 
-markers_post_implantation <- subset(markers_post_implantation, #p_val < 0.05 & 
-                                    avg_log2FC > 0.5)
+markers_post_implantation_5 <- FindMarkers(
+  pb_seurat, 
+  slot = "data",
+  min.cells.group = 1,
+  ident.1 = grep("E5.5", colnames(pb_seurat), value = T),
+  ident.2 = grep("E3.5|E4.5|E6.5|In house-blastocyst|public Blastocyst-SSII", colnames(pb_seurat), value = T), 
+  only.pos = T,
+  logfc.threshold = 0.25)
+markers_post_implantation_5_ordered <- markers_post_implantation_5 %>%
+  arrange(desc(avg_log2FC)) %>%
+  mutate(group = "E5.5")
 
-exp_data <- GetAssayData(pb_seurat, assay = "RNA", slot = "data")
-exp_data <- exp_data[intersect(rownames(exp_data), rownames(markers_post_implantation)), ]
+markers_post_implantation_6 <- FindMarkers(
+  pb_seurat, 
+  slot = "data",
+  min.cells.group = 1,
+  ident.1 = grep("E6.5", colnames(pb_seurat), value = T),
+  ident.2 = grep("E3.5|E4.5|E5.5|In house-blastocyst|public Blastocyst-SSII", colnames(pb_seurat), value = T), 
+  only.pos = T,
+  logfc.threshold = 0.25)
+markers_post_implantation_6_ordered <- markers_post_implantation_6 %>%
+  arrange(desc(avg_log2FC)) %>%
+  mutate(group = "E6.5")
+
+# Get top 50 gene names from each
+top50_4 <- rownames(markers_post_implantation_4_ordered)[1:200]
+top50_5 <- rownames(markers_post_implantation_5_ordered)[1:200]
+top50_6 <- rownames(markers_post_implantation_6_ordered)[1:200]
+
+# Union all top genes
+top_union_genes <- union(top50_4, union(top50_5, top50_6))
+
+exp_data <- GetAssayData(pb_seurat, assay = "RNA", slot = "scale.data")
+exp_data <- exp_data[intersect(rownames(exp_data), top_union_genes), ]
 colnames(exp_data) <- colnames(pb_seurat)
 
 meta <- pb_seurat@meta.data
 exp_scale = exp_data
-
-## 7) hclust by post-implantation stage-specific genes ----
-### a. subset genes high expressed in E4.5-E6.5 while low expressed in blastocyst ----
-post_implantation_genes <- rownames(exp_scale)
-
-high_exp_post_implantation <- apply(exp_scale[intersect(rownames(exp_data), rownames(markers_post_implantation)),], 1, function(x) {
-  # Mean expression in E5.5, E6.5 should be greater than in blastocyst stages
-  high_exp_condition <- mean(x[colnames(exp_scale) %in% c("E5.5", "E6.5")]) > 
-    mean(x[grep("E3.5|blastocyst|Blastocyst",colnames(exp_scale),value = T)])
-  
-  return(high_exp_condition )
-})
-
-# Filter marker genes with higher expression in post-implantation stages and lower in blastocyst
-filtered_markers <- post_implantation_genes[high_exp_post_implantation]
 
 ### b. plot heatmap ---- 
 if (ident_by == "cell_info") {
@@ -1236,7 +1333,7 @@ if (ident_by == "cell_info") {
   pdf(paste0(file_names_prefix, "filtered_post-implantation stage-specific genes_heatmap.pdf"), width=10, height=15, onefile = F)
 }
 print(
-  Heatmap(as.matrix(exp_scale[filtered_markers,]),
+  Heatmap(as.matrix(exp_scale[intersect(rownames(exp_scale), top_union_genes),]),
           column_split = meta[ident_by],
           show_row_names = F,
           show_column_names = T,  # Show column names
@@ -1247,7 +1344,13 @@ print(
           heatmap_legend_param = list(title='')))
 dev.off()
 
-## 8) Similarity ----
+## 8) save data ----
+saveRDS(pb_seurat, paste0(file_names_prefix, "data.rds"))
+write.csv(markers_post_implantation_4_ordered, paste0(file_names_prefix, "_E4.5_DEG.csv"), quote = F, row.names = T)
+write.csv(markers_post_implantation_5_ordered, paste0(file_names_prefix, "_E5.5_DEG.csv"), quote = F, row.names = T)
+write.csv(markers_post_implantation_6_ordered, paste0(file_names_prefix, "_E6.5_DEG.csv"), quote = F, row.names = T)
+
+## 9) Similarity ----
 ### a. train data (blastocyst) ----
 train <- subset(dataset, sample_info %in% as.character(
   grep("E3.5|E4.5|E5.5|E6.5|blastocyst",dataset$sample_info, value = T)))
@@ -1386,6 +1489,6 @@ if (nrow(as.matrix(exp_scale) %>% t) > 1){
 }
 dev.off()
 
-## 10) save data ----
+## 11) save data ----
 saveRDS(pb_seurat, paste0(file_names_prefix, "data.rds"))
 write.csv(markers_post_implantation, paste0(file_names_prefix, "DEG.csv"), quote = F, row.names = T)
